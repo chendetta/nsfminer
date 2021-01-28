@@ -172,14 +172,6 @@ static const char* strClError(cl_int err)
     return "Unknown CL error encountered";
 }
 
-/**
- * Prints cl::Errors in a uniform way
- * @param msg text prepending the error message
- * @param clerr cl:Error object
- *
- * Prints errors in the format:
- *      msg: what(), string err() (numeric err())
- */
 static string ethCLErrorHelper(const char* msg, cl::Error const& clerr)
 {
     ostringstream osstream;
@@ -242,185 +234,24 @@ vector<cl::Device> getDevices(vector<cl::Platform> const& _platforms, unsigned _
 CLMiner::CLMiner(unsigned _index, DeviceDescriptor& _device) : Miner("cl-", _index)
 {
     m_deviceDescriptor = _device;
-    m_block_multiple = 200000;
+    m_block_multiple = 20000;
 }
 
 CLMiner::~CLMiner()
 {
     stopWorking();
-    kick_miner();
+    miner_kick();
 }
 
-// NOTE: The following struct must match the one defined in
-// ethash.cl
-struct SearchResults
+static uint32_t one = 1;
+
+void CLMiner::miner_kick()
 {
-    uint32_t hashCount;
-    uint32_t count;
-    uint32_t abort;
-    struct
+    if (resourceInitialized())
     {
-        uint32_t gid;
-        // Can't use h256 data type here since h256 contains
-        // more than raw data. Kernel returns raw mix hash.
-        uint32_t mix[8];
-        uint32_t pad[7];  // pad to 16 words for easy indexing
-    } rslt[c_maxSearchResults];
-};
-
-void CLMiner::workLoop()
-{
-    // Memory for zero-ing buffers. Cannot be static or const because crashes on macOS.
-    static uint32_t zerox3[3] = {0, 0, 0};
-
-    uint64_t startNonce = 0;
-
-    // The work package currently processed by GPU.
-    WorkPackage current;
-    current.header = h256();
-
-    if (!initDevice())
-        return;
-
-    try
-    {
-        while (!shouldStop())
-        {
-
-            // Read results.
-            SearchResults results;
-
-            if (m_queue)
-            {
-                // no need to read the abort flag.
-                m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE,
-                    offsetof(SearchResults, hashCount), 2 * sizeof(results.hashCount),
-                    (void*)&results.hashCount);
-                if (results.count)
-                {
-                    if (results.count > c_maxSearchResults) {
-                        results.count = c_maxSearchResults;
-                    }
-
-                    m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE, 0,
-                        results.count * sizeof(results.rslt[0]), (void*)&results);
-                }
-                // clean the solution count, hash count, and abort flag
-                m_queue->enqueueWriteBuffer(*m_searchBuffer, CL_FALSE,
-                    offsetof(SearchResults, hashCount), sizeof(zerox3), zerox3);
-            }
-            else
-                results.count = 0;
-
-            // Wait for work or 3 seconds (whichever the first)
-            WorkPackage w = work();
-            if (!w)
-            {
-                m_hung_miner.store(false);
-                unique_lock<mutex> l(miner_work_mutex);
-                m_new_work_signal.wait_for(l, chrono::seconds(3));
-                continue;
-            }
-
-            if (current.header != w.header)
-            {
-
-                if (current.epoch != w.epoch)
-                {
-                    if (!initEpoch())
-                        break;
-                    w = work();
-                }
-
-                // Upper 64 bits of the boundary.
-                const uint64_t target = (uint64_t)(u64)((u256)w.boundary >> 192);
-                assert(target > 0);
-
-                startNonce = w.startNonce;
-
-                // Update header constant buffer.
-                m_queue->enqueueWriteBuffer(*m_header, CL_FALSE, 0, w.header.size, w.header.data());
-                // zero the result count
-                m_queue->enqueueWriteBuffer(*m_searchBuffer, CL_FALSE,
-                    offsetof(SearchResults, hashCount), sizeof(zerox3), zerox3);
-
-                m_searchKernel.setArg(0, *m_searchBuffer);  // Supply output buffer to kernel.
-                m_searchKernel.setArg(1, *m_header);        // Supply header buffer to kernel.
-                m_searchKernel.setArg(2, *m_dag[0]);        // Supply DAG buffer to kernel.
-                m_searchKernel.setArg(3, *m_dag[1]);        // Supply DAG buffer to kernel.
-                m_searchKernel.setArg(4, m_dagItems);
-                m_searchKernel.setArg(6, target);
-
-#ifdef DEV_BUILD
-                if (g_logOptions & LOG_SWITCH)
-                    cnote << "Switch time: "
-                          << chrono::duration_cast<chrono::microseconds>(
-                                 chrono::steady_clock::now() - m_workSwitchStart)
-                                 .count()
-                          << " us.";
-#endif
-            }
-
-            float hr = RetrieveHashRate();
-            if (hr > 1e7)
-                m_block_multiple =
-                    uint32_t(hr * CL_TARGET_BATCH_TIME / m_deviceDescriptor.clGroupSize);
-
-            // Run the kernel.
-            m_searchKernel.setArg(5, startNonce);
-            m_hung_miner.store(false);
-            m_queue->enqueueNDRangeKernel(m_searchKernel, cl::NullRange,
-                m_deviceDescriptor.clGroupSize * m_block_multiple, m_deviceDescriptor.clGroupSize);
-
-            if (results.count)
-            {
-                // Report results while the kernel is running.
-                for (uint32_t i = 0; i < results.count; i++)
-                {
-                    uint64_t nonce = current.startNonce + results.rslt[i].gid;
-                    h256 mix((::byte*)&results.rslt[i].mix, h256::ConstructFromPointer);
-
-                    Farm::f().submitProof(
-                        Solution{nonce, mix, current, chrono::steady_clock::now(), m_index});
-                    ReportSolution(current.header, nonce);
-                }
-            }
-
-            current = w;  // kernel now processing newest work
-            current.startNonce = startNonce;
-            // Increase start nonce for following kernel execution.
-            startNonce += m_deviceDescriptor.clGroupSize * m_block_multiple;
-            // Report hash count
-            updateHashRate(m_deviceDescriptor.clGroupSize, results.hashCount);
-        }
-
-        if (m_queue)
-            m_queue->finish();
-
-        free_buffers();
-        m_abortMutex.unlock();
-    }
-    catch (cl::Error const& _e)
-    {
-        string _what = ethCLErrorHelper("OpenCL Error", _e);
-        free_buffers();
-        m_abortMutex.unlock();
-        throw runtime_error(_what);
-    }
-}
-
-
-void CLMiner::kick_miner()
-{
-    m_abortMutex.lock();
-    // Memory for abort Cannot be static because crashes on macOS.
-    if (m_abortqueue)
-    {
-        static uint32_t one = 1;
         m_abortqueue->enqueueWriteBuffer(
-            *m_searchBuffer, CL_FALSE, offsetof(SearchResults, abort), sizeof(one), &one);
+            *m_searchBuffer, CL_FALSE, offsetof(Search_results, done), sizeof(one), &one);
     }
-    m_abortMutex.unlock();
     m_new_work_signal.notify_one();
 }
 
@@ -567,9 +398,8 @@ void CLMiner::enumDevices(map<string, DeviceDescriptor>& _DevicesCollection)
 
 }
 
-bool CLMiner::initDevice()
+bool CLMiner::miner_init_device()
 {
-    m_initialized = false;
     // LookUp device
     // Load available platforms
     vector<cl::Platform> platforms = getPlatforms();
@@ -647,9 +477,8 @@ bool CLMiner::initDevice()
 
 }
 
-bool CLMiner::initEpoch()
+bool CLMiner::miner_init_epoch()
 {
-    m_initialized = false;
     auto startInit = chrono::steady_clock::now();
     size_t RequiredMemory = m_epochContext.dagSize + m_epochContext.lightSize;
 
@@ -801,6 +630,8 @@ bool CLMiner::initEpoch()
                 {
                     // Ok, no room for light cache on GPU. Try allocating on host
                     ccrit << "No room on GPU";
+                    pause(MinerPauseEnum::PauseDueToInitEpochError);
+                    free_buffers();
                     throw;
                 }
             }
@@ -827,13 +658,8 @@ bool CLMiner::initEpoch()
         // create buffer for header
         m_header = new cl::Buffer(*m_context, CL_MEM_READ_ONLY, 32);
 
-        m_searchKernel.setArg(1, m_header[0]);
-        m_searchKernel.setArg(2, *m_dag[0]);
-        m_searchKernel.setArg(3, *m_dag[1]);
-        m_searchKernel.setArg(4, m_dagItems);
-
         // create mining buffers
-        m_searchBuffer = new cl::Buffer(*m_context, CL_MEM_WRITE_ONLY, sizeof(SearchResults));
+        m_searchBuffer = new cl::Buffer(*m_context, CL_MEM_WRITE_ONLY, sizeof(Search_results));
 
         m_dagKernel.setArg(1, *m_light);
         m_dagKernel.setArg(2, *m_dag[0]);
@@ -874,7 +700,83 @@ bool CLMiner::initEpoch()
         free_buffers();
         return false;
     }
-    m_initialized = true;
-    m_abortMutex.unlock();
+
+    m_searchKernel.setArg(0, *m_searchBuffer);  // Supply output buffer to kernel.
+    m_searchKernel.setArg(1, *m_header);
+    m_searchKernel.setArg(2, *m_dag[0]);  // Supply DAG buffer to kernel.
+    m_searchKernel.setArg(3, *m_dag[1]);  // Supply DAG buffer to kernel.
+    m_searchKernel.setArg(4, m_dagItems);
+
+#ifdef DEV_BUILD
+    if (g_logOptions & LOG_SWITCH)
+        cnote << "Switch time: "
+              << chrono::duration_cast<chrono::microseconds>(
+                     chrono::steady_clock::now() - m_workSwitchStart)
+                     .count()
+              << " us.";
+#endif
     return true;
 }
+
+static uint32_t zerox3[3] = {0, 0, 0};
+
+void CLMiner::miner_clear_counts(uint32_t streamIdx)
+{
+    (void)streamIdx;
+    // clean the solution count, hash count, and abort flag
+    m_queue->enqueueWriteBuffer(
+        *m_searchBuffer, CL_FALSE, offsetof(Search_results, hashCount), sizeof(zerox3), zerox3);
+}
+
+void CLMiner::miner_reset_device()
+{
+    // never reset opencl device
+}
+
+void CLMiner::miner_search(uint32_t streamIdx, uint64_t start_nonce)
+{
+    (void)streamIdx;
+    // Run the kernel.
+    m_searchKernel.setArg(5, start_nonce);
+    m_hung_miner.store(false);
+    m_queue->enqueueNDRangeKernel(m_searchKernel, cl::NullRange,
+        m_deviceDescriptor.clGroupSize * m_block_multiple, m_deviceDescriptor.clGroupSize);
+}
+
+void CLMiner::miner_sync(uint32_t streamIdx, Search_results& search_buf)
+{
+    (void)streamIdx;
+    // no need to read the abort flag.
+    m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE, offsetof(Search_results, hashCount),
+        3 * sizeof(uint32_t), (void*)&search_buf.hashCount);
+    if (search_buf.solCount)
+    {
+        if (search_buf.solCount > MAX_RESULTS)
+            search_buf.solCount = MAX_RESULTS;
+
+        m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE, offsetof(Search_results, results),
+            search_buf.solCount * sizeof(Search_result), (void*)search_buf.results);
+    }
+}
+
+void CLMiner::miner_set_header(const h256& header)
+{
+    // Update header constant buffer.
+    m_queue->enqueueWriteBuffer(*m_header, CL_FALSE, 0, header.size, header.data());
+}
+
+void CLMiner::miner_set_target(uint64_t target)
+{
+    m_searchKernel.setArg(6, target);
+}
+
+void CLMiner::miner_get_block_sizes(Block_sizes& blks)
+{
+    float hr = RetrieveHashRate();
+    if (hr > 1e7)
+        m_block_multiple = uint32_t(hr * CL_TARGET_BATCH_TIME / m_deviceDescriptor.clGroupSize);
+    blks.streams = 1;
+    blks.block_size = m_deviceDescriptor.clGroupSize;
+    blks.multiplier = m_block_multiple;
+}
+

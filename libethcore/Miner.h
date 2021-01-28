@@ -285,16 +285,27 @@ public:
     virtual unsigned get_tstart() = 0;
     virtual unsigned get_tstop() = 0;
 
-    /**
-     * @brief Called from a Miner to note a WorkPackage has a solution.
-     * @param _p The solution.
-     * @return true iff the solution was good (implying that mining should be .
-     */
     virtual void submitProof(Solution const& _p) = 0;
     virtual void accountSolution(unsigned _minerIdx, SolutionAccountingEnum _accounting) = 0;
 
 private:
     static FarmFace* m_this;
+};
+
+struct Search_result
+{
+    // One word for gid and 8 for mix hash
+    uint32_t gid;
+    uint32_t mix[8];
+    uint32_t pad[7];  // pad to size power of 2
+};
+
+struct Search_results
+{
+    uint32_t hashCount;
+    uint32_t solCount;
+    volatile uint32_t done;
+    Search_result results[MAX_RESULTS];
 };
 
 class Miner : public Worker
@@ -307,6 +318,7 @@ public:
     ~Miner() override = default;
 
     void workLoop();
+    virtual void miner_kick() = 0;
 
     DeviceDescriptor getDescriptor();
     void setWork(WorkPackage const& _work);
@@ -314,7 +326,6 @@ public:
     unsigned Index() { return m_index; };
     HwMonitorInfo hwmonInfo() { return m_hwmoninfo; }
     void setHwmonDeviceIndex(int i) { m_hwmoninfo.deviceIndex = i; }
-    virtual void kick_miner() = 0;
     void pause(MinerPauseEnum what);
     bool paused();
     bool pauseTest(MinerPauseEnum what);
@@ -323,36 +334,26 @@ public:
     float RetrieveHashRate() noexcept;
     void TriggerHashRateUpdate() noexcept;
     std::atomic<bool> m_hung_miner = {false};
-    bool m_initialized = false;
+    bool gpuInitialized() { return m_gpuInitialized.load(); };
+    bool resourceInitialized() { return m_resourceInitialized.load(); };
 
 protected:
-    struct SearchResults
+    struct Block_sizes
     {
-        uint32_t hashCount;
-        uint32_t count;
-        uint32_t abort;
-        struct
-        {
-            uint32_t gid;
-            // Can't use h256 data type here since h256 contains
-            // more than raw data. Kernel returns raw mix hash.
-            uint32_t mix[8];
-            uint32_t pad[7];  // pad to 16 words for easy indexing
-        } rslt[MAX_RESULTS];
+        uint32_t streams;
+        uint32_t block_size;
+        uint32_t multiplier;
     };
 
-    virtual bool initDevice() = 0;
-    virtual bool initEpoch() = 0;
+    virtual bool miner_init_device() = 0;
+    virtual bool miner_init_epoch() = 0;
     virtual void miner_set_header(const h256& header) = 0;
     virtual void miner_set_target(uint64_t _target) = 0;
-    virtual uint32_t miner_get_streams() = 0;
-    virtual uint32_t miner_get_stream_blocks() = 0;
     virtual void miner_clear_counts(uint32_t streamIdx) = 0;
-    virtual void miner_adjust_work_multiple() = 0;
     virtual void miner_reset_device() = 0;
-    virtual void miner_search(
-        uint32_t streamIdx, SearchResults& search_buf, uint64_t start_nonce) = 0;
-    virtual void miner_sync(uint32_t streamIdx) = 0;
+    virtual void miner_search(uint32_t streamIdx, uint64_t start_nonce) = 0;
+    virtual void miner_sync(uint32_t streamIdx, Search_results& search_buf) = 0;
+    virtual void miner_get_block_sizes(Block_sizes& blks) = 0;
 
     WorkPackage work() const;
     void ReportSolution(const h256& header, uint64_t nonce);
@@ -390,6 +391,10 @@ private:
     std::atomic<float> m_hashRate = {0.0};
     atomic<bool> m_hashRateUpdate = {false};
     uint64_t m_groupCount = 0;
+    atomic<bool> m_gpuInitialized = {false};
+    atomic<bool> m_resourceInitialized = {false};
+
+    int m_lastEpoch = -1;
 };
 
 }  // namespace eth

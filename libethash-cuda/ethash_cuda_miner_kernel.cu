@@ -25,12 +25,10 @@ __global__ void ethash_search(Search_results* g_output, uint64_t start_nonce)
     uint2 mix[4];
     bool r = compute_hash(start_nonce + gid, mix);
     if (threadIdx.x == 0)
-        atomicInc((uint32_t*)&g_output->counts.hashCount, 0xffffffff);
+        atomicInc((uint32_t*)&g_output->hashCount, 0xffffffff);
     if (r)
         return;
-    uint32_t index = atomicInc((uint32_t*)&g_output->counts.solCount, 0xffffffff);
-    if (index >= MAX_SEARCH_RESULTS)
-        return;
+    uint32_t index = atomicInc((uint32_t*)&g_output->solCount, MAX_SEARCH_RESULTS);
     g_output->results[index].gid = gid;
     g_output->results[index].mix[0] = mix[0].x;
     g_output->results[index].mix[1] = mix[0].y;

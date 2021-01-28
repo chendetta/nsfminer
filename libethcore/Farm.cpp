@@ -269,7 +269,7 @@ void Farm::stop()
             for (auto const& miner : m_miners)
             {
                 miner->triggerStopWorking();
-                miner->kick_miner();
+                miner->miner_kick();
             }
             m_miners.clear();
             m_isMining.store(false, memory_order_relaxed);
@@ -443,31 +443,30 @@ void Farm::submitProofAsync(Solution const& _s)
 #endif
 }
 
-void Farm::checkForHungMiners()
-{
-    // Process miners
-    for (auto const& miner : m_miners)
-        if (!miner->paused() && miner->m_initialized)
-        {
-            if (miner->m_hung_miner.load())
-            {
-                if (g_exitOnError)
-                    throw runtime_error("Hung GPU");
-                else if (!reboot({{"hung_miner_reboot"}}))
-                    cwarn << "Hung GPU " << miner->Index() << " detected and reboot script failed!";
-                return;
-            }
-            miner->m_hung_miner.store(true);
-        }
-}
-
 // Collects data about hashing and hardware status
 void Farm::collectData(const boost::system::error_code& ec)
 {
     if (ec)
         return;
 
-    checkForHungMiners();
+    // check for hung miners
+    for (auto const& miner : m_miners)
+    {
+ccrit << miner->paused() << " " << miner->gpuInitialized();
+        if (!miner->paused() && miner->gpuInitialized())
+        {
+            if (miner->m_hung_miner.load())
+            {
+                if (g_exitOnError)
+                    throw runtime_error("Hung GPU");
+                else if (!reboot({{"hung_miner_reboot"}}))
+                    cwarn << "Hung GPU " << getThreadName() << " detected and reboot script failed or --exit not specified!";
+            }
+            miner->m_hung_miner.store(true);
+        }
+        else
+            miner->m_hung_miner.store(false);
+    }
 
     // Reset hashrate (it will accumulate from miners)
     float farm_hr = 0.0f;

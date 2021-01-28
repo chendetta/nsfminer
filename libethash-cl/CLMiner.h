@@ -48,26 +48,19 @@ public:
     static void enumDevices(std::map<string, DeviceDescriptor>& _DevicesCollection);
 
 protected:
-    bool initDevice() override;
-
-    bool initEpoch() override;
-
-    void kick_miner() override;
-
+    bool miner_init_device() override;
+    bool miner_init_epoch() override;
+    void miner_kick() override;
     void miner_set_header(const h256& header) override;
     void miner_set_target(uint64_t _target) override;
-    uint32_t miner_get_streams() override;
-    uint32_t miner_get_stream_blocks() override;
     void miner_clear_counts(uint32_t streamIdx) override;
-    void miner_adjust_work_multiple() override;
     void miner_reset_device() override;
-    void miner_search(uint32_t streamIdx, SearchResults& search_buf, uint64_t start_nonce) override;
-    void miner_sync(uint32_t streamIdx) override;
+    void miner_search(uint32_t streamIdx, uint64_t start_nonce) override;
+    void miner_sync(uint32_t streamIdx, Search_results& search_buf) override;
+    void miner_get_block_sizes(Block_sizes& blks) override;
 
 private:
     
-    void workLoop() override;
-
     cl::Kernel m_searchKernel;
     cl::Kernel m_dagKernel;
     cl::Device m_device;
@@ -82,7 +75,6 @@ private:
 
     void free_buffers()
     {
-        m_abortMutex.lock();
         if (m_dag[0])
         {
             delete m_dag[0];
@@ -126,7 +118,6 @@ private:
     }
 
     unsigned m_dagItems = 0;
-    std::mutex m_abortMutex;
 };
 
 }  // namespace eth

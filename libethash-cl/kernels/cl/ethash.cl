@@ -1,4 +1,3 @@
-
 #define OPENCL_PLATFORM_UNKNOWN 0
 #define OPENCL_PLATFORM_AMD 1
 #define OPENCL_PLATFORM_CLOVER 2
@@ -255,25 +254,30 @@ typedef union
     } while (0)
 
 // NOTE: This struct must match the one defined in CLMiner.cpp
-struct SearchResults
+struct Search_result
+{
+    // One word for gid and 8 for mix hash
+    uint gid;
+    uint mix[8];
+    uint pad[7];  // pad to size power of 2
+};
+
+#define MAX_RESULTS 4
+
+struct Search_results
 {
     uint hashCount;
-    uint count;
-    volatile uint abort;
-    struct
-    {
-        uint gid;
-        uint mix[8];
-        uint pad[7];  // pad to 16 words for easy indexing
-    } rslt[MAX_OUTPUTS];
+    uint solCount;
+    volatile uint done;
+    struct Search_result results[MAX_RESULTS];
 };
 
 __attribute__((reqd_work_group_size(WORKSIZE, 1, 1))) __kernel void search(
-    __global struct SearchResults* g_output, __constant uint2 const* g_header,
+    __global struct Search_results* g_output, __constant uint2 const* g_header,
     __global ulong8 const* _g_dag0, __global ulong8 const* _g_dag1, uint dag_size,
     ulong start_nonce, ulong target)
 {
-    if (g_output->abort)
+    if (g_output->done)
         return;
 
     const uint thread_id = get_local_id(0) % 4;
@@ -395,17 +399,17 @@ __attribute__((reqd_work_group_size(WORKSIZE, 1, 1))) __kernel void search(
 
     if (as_ulong(as_uchar8(state[0]).s76543210) <= target)
     {
-        atomic_inc(&g_output->abort);
-        uint slot = min(MAX_OUTPUTS - 1u, atomic_inc(&g_output->count));
-        g_output->rslt[slot].gid = gid;
-        g_output->rslt[slot].mix[0] = mixhash[0].s0;
-        g_output->rslt[slot].mix[1] = mixhash[0].s1;
-        g_output->rslt[slot].mix[2] = mixhash[1].s0;
-        g_output->rslt[slot].mix[3] = mixhash[1].s1;
-        g_output->rslt[slot].mix[4] = mixhash[2].s0;
-        g_output->rslt[slot].mix[5] = mixhash[2].s1;
-        g_output->rslt[slot].mix[6] = mixhash[3].s0;
-        g_output->rslt[slot].mix[7] = mixhash[3].s1;
+        atomic_inc(&g_output->done);
+        uint slot = min(MAX_RESULTS - 1u, atomic_inc(&g_output->solCount));
+        g_output->results[slot].gid = gid;
+        g_output->results[slot].mix[0] = mixhash[0].s0;
+        g_output->results[slot].mix[1] = mixhash[0].s1;
+        g_output->results[slot].mix[2] = mixhash[1].s0;
+        g_output->results[slot].mix[3] = mixhash[1].s1;
+        g_output->results[slot].mix[4] = mixhash[2].s0;
+        g_output->results[slot].mix[5] = mixhash[2].s1;
+        g_output->results[slot].mix[6] = mixhash[3].s0;
+        g_output->results[slot].mix[7] = mixhash[3].s1;
     }
 }
 
@@ -484,3 +488,4 @@ __kernel void GenerateDAG(uint start, __global const uint16* _Cache, __global ui
     // if (NodeIdx < DAG_SIZE)
     DAG[(NodeIdx / 2) | (NodeIdx & 1)] = DAGNode;
 }
+

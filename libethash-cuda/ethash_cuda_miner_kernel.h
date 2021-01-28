@@ -21,14 +21,10 @@ struct Search_Result
     uint32_t pad[7];  // pad to size power of 2
 };
 
-struct count_pair
-{
-    uint32_t hashCount, solCount;
-};
-
 struct Search_results
 {
-    struct count_pair counts;
+    uint32_t hashCount;
+    uint32_t solCount;
     volatile uint32_t done;
     Search_Result results[MAX_SEARCH_RESULTS];
 };

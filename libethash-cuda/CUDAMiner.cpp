@@ -1,6 +1,5 @@
 
 #include <libethcore/Farm.h>
-#include <ethash/ethash.hpp>
 
 #include "CUDAMiner.h"
 
@@ -17,14 +16,14 @@ CUDAMiner::CUDAMiner(unsigned _index, DeviceDescriptor& _device) : Miner("cu-", 
 CUDAMiner::~CUDAMiner()
 {
     stopWorking();
-    kick_miner();
+    miner_kick();
 }
 
 #define HostToDevice(dst, src, siz) CUDA_CALL(cudaMemcpy(dst, src, siz, cudaMemcpyHostToDevice))
 
 #define DeviceToHost(dst, src, siz) CUDA_CALL(cudaMemcpy(dst, src, siz, cudaMemcpyDeviceToHost))
 
-bool CUDAMiner::initDevice()
+bool CUDAMiner::miner_init_device()
 {
     cnote << "Using Pci " << m_deviceDescriptor.uniqueId << ": " << m_deviceDescriptor.cuName
           << " (Compute " + m_deviceDescriptor.cuCompute + ") Memory : "
@@ -50,18 +49,13 @@ bool CUDAMiner::initDevice()
     return true;
 }
 
-bool CUDAMiner::initEpoch()
+bool CUDAMiner::miner_init_epoch()
 {
-    m_initialized = false;
     // If we get here it means epoch has changed so it's not necessary
     // to check again dag sizes. They're changed for sure
     m_current_target = 0;
     auto startInit = chrono::steady_clock::now();
     size_t RequiredTotalMemory = (m_epochContext.dagSize + m_epochContext.lightSize);
-
-    // Release the pause flag if any
-    resume(MinerPauseEnum::PauseDueToInsufficientMemory);
-    resume(MinerPauseEnum::PauseDueToInitEpochError);
 
     try
     {
@@ -86,6 +80,9 @@ bool CUDAMiner::initEpoch()
                 return false;  // This will prevent to exit the thread and
                                // Eventually resume mining when changing coin or epoch (NiceHash)
             }
+    	    // Release the pause flag if any
+    	    resume(MinerPauseEnum::PauseDueToInsufficientMemory);
+            resume(MinerPauseEnum::PauseDueToInitEpochError);
 
             // create buffer for cache
             CUDA_CALL(cudaMalloc((void**)&light, m_epochContext.lightSize));
@@ -127,78 +124,15 @@ bool CUDAMiner::initEpoch()
         return false;
     }
 
-    m_initialized = true;
     return true;
 }
 
-void CUDAMiner::workLoop()
+static uint32_t one = 1;
+
+void CUDAMiner::miner_kick()
 {
-    WorkPackage current;
-    current.header = h256();
-
-    if (!initDevice())
-        return;
-
-    try
+    if (resourceInitialized() && gpuInitialized())
     {
-        while (!shouldStop())
-        {
-            const WorkPackage w = work();
-            if (!w)
-            {
-                m_hung_miner.store(false);
-                unique_lock<mutex> l(miner_work_mutex);
-                m_new_work_signal.wait_for(l, chrono::seconds(3));
-                continue;
-            }
-
-            // Epoch change ?
-            if (current.epoch != w.epoch)
-            {
-                if (!initEpoch())
-                    break;
-
-                // As DAG generation takes a while we need to
-                // ensure we're on latest job, not on the one
-                // which triggered the epoch change
-                current = w;
-                continue;
-            }
-
-            // Persist most recent job.
-            // Job's differences should be handled at higher level
-            current = w;
-
-            uint64_t upper64OfBoundary = (uint64_t)(u64)((u256)current.boundary >> 192);
-
-            // adjust work multiplier
-            float hr = RetrieveHashRate();
-            if (hr >= 1e7)
-                m_block_multiple =
-                    uint32_t((hr * CU_TARGET_BATCH_TIME) /
-                             (m_deviceDescriptor.cuStreamSize * m_deviceDescriptor.cuBlockSize));
-
-            // Eventually start searching
-            search(current.header.data(), upper64OfBoundary, current.startNonce, w);
-        }
-
-        // Reset miner and stop working
-        CUDA_CALL(cudaDeviceReset());
-    }
-    catch (runtime_error const& _e)
-    {
-        string _what = "GPU error: ";
-        _what.append(_e.what());
-        throw runtime_error(_what);
-    }
-}
-
-void CUDAMiner::kick_miner()
-{
-    static const uint32_t one = 1;
-    if (!m_done)
-    {
-        m_done = true;
         for (unsigned i = 0; i < m_deviceDescriptor.cuStreamSize; i++)
             CUDA_CALL(cudaMemcpyAsync((uint8_t*)m_search_buf[i] + offsetof(Search_results, done),
                 &one, sizeof(one), cudaMemcpyHostToDevice));
@@ -277,6 +211,7 @@ void CUDAMiner::enumDevices(map<string, DeviceDescriptor>& _DevicesCollection)
     }
 }
 
+#if 0
 static const uint32_t zero3[3] = {0, 0, 0};  // zero the result count
 
 void CUDAMiner::search(
@@ -375,4 +310,61 @@ void CUDAMiner::search(
                      .count()
               << " us.";
 #endif
+}
+#endif
+
+static uint32_t zeros[3] = {0, 0, 0};
+
+void CUDAMiner::miner_clear_counts(uint32_t streamIdx)
+{
+    // clear solution count, hash count and done
+    HostToDevice(m_search_buf[streamIdx], zeros, sizeof(zeros));
+}
+
+void CUDAMiner::miner_reset_device()
+{
+    CUDA_CALL(cudaDeviceReset());
+}
+
+void CUDAMiner::miner_search(uint32_t streamIdx, uint64_t start_nonce)
+{
+    m_hung_miner.store(false);
+    run_ethash_search(m_block_multiple, m_deviceDescriptor.cuBlockSize, m_streams[streamIdx],
+        m_search_buf[streamIdx], start_nonce);
+}
+
+void CUDAMiner::miner_sync(uint32_t streamIdx, Search_results& results)
+{
+    // Wait for the stream complete
+    CUDA_CALL(cudaStreamSynchronize(m_streams[streamIdx]));
+    DeviceToHost(&results, m_search_buf[streamIdx], 3 * sizeof(uint32_t));
+
+    if (results.solCount > MAX_SEARCH_RESULTS)
+	results.solCount = MAX_SEARCH_RESULTS;
+
+    if (results.solCount)
+        DeviceToHost(results.results, (uint8_t*)m_search_buf[streamIdx] + offsetof(Search_results, results),
+            results.solCount * sizeof(Search_result));
+}
+
+void CUDAMiner::miner_set_header(const h256& header)
+{
+    set_header(*((const hash32_t*)header.data()));
+}
+
+void CUDAMiner::miner_set_target(uint64_t target)
+{
+    set_target(target);
+}
+
+void CUDAMiner::miner_get_block_sizes(Block_sizes& blks)
+{
+    float hr = RetrieveHashRate();
+    if (hr >= 1e7)
+        m_block_multiple =
+            uint32_t((hr * CU_TARGET_BATCH_TIME) /
+                     (m_deviceDescriptor.cuStreamSize * m_deviceDescriptor.cuBlockSize));
+    blks.streams = m_deviceDescriptor.cuStreamSize;
+    blks.block_size = m_deviceDescriptor.cuBlockSize;
+    blks.multiplier = m_block_multiple;
 }
