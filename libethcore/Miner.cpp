@@ -183,7 +183,7 @@ void Miner::workLoop()
                 if (!miner_init_epoch())
                     break;
                 m_resourceInitialized.store(true);
-		m_lastEpoch = current.epoch;
+                m_lastEpoch = current.epoch;
 
                 // As DAG generation takes a while we need to
                 // ensure we're on latest job, not on the one
@@ -192,7 +192,8 @@ void Miner::workLoop()
             }
 
             // Eventually start searching
-            search(current.header, uint64_t((u64)((u256)current.boundary >> 192)), current.startNonce, current);
+            search(current.header, uint64_t((u64)((u256)current.boundary >> 192)),
+                current.startNonce, current);
         }
 
     }

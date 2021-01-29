@@ -80,8 +80,8 @@ bool CUDAMiner::miner_init_epoch()
                 return false;  // This will prevent to exit the thread and
                                // Eventually resume mining when changing coin or epoch (NiceHash)
             }
-    	    // Release the pause flag if any
-    	    resume(MinerPauseEnum::PauseDueToInsufficientMemory);
+            // Release the pause flag if any
+            resume(MinerPauseEnum::PauseDueToInsufficientMemory);
             resume(MinerPauseEnum::PauseDueToInitEpochError);
 
             // create buffer for cache
@@ -340,10 +340,11 @@ void CUDAMiner::miner_sync(uint32_t streamIdx, Search_results& results)
     DeviceToHost(&results, m_search_buf[streamIdx], 3 * sizeof(uint32_t));
 
     if (results.solCount > MAX_SEARCH_RESULTS)
-	results.solCount = MAX_SEARCH_RESULTS;
+        results.solCount = MAX_SEARCH_RESULTS;
 
     if (results.solCount)
-        DeviceToHost(results.results, (uint8_t*)m_search_buf[streamIdx] + offsetof(Search_results, results),
+        DeviceToHost(results.results,
+            (uint8_t*)m_search_buf[streamIdx] + offsetof(Search_results, results),
             results.solCount * sizeof(Search_result));
 }
 

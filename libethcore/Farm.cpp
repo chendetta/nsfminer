@@ -452,15 +452,15 @@ void Farm::collectData(const boost::system::error_code& ec)
     // check for hung miners
     for (auto const& miner : m_miners)
     {
-ccrit << miner->paused() << " " << miner->gpuInitialized();
-        if (!miner->paused() && miner->gpuInitialized())
+        if (!miner->paused() && miner->resourceInitialized())
         {
             if (miner->m_hung_miner.load())
             {
                 if (g_exitOnError)
                     throw runtime_error("Hung GPU");
                 else if (!reboot({{"hung_miner_reboot"}}))
-                    cwarn << "Hung GPU " << getThreadName() << " detected and reboot script failed or --exit not specified!";
+                    cwarn << "Hung GPU " << getThreadName()
+                          << " detected and reboot script failed or --exit not specified!";
             }
             miner->m_hung_miner.store(true);
         }
