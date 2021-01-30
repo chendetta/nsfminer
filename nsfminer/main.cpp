@@ -936,8 +936,7 @@ public:
             if (m_minerType == MinerType::CL || m_minerType == MinerType::Mixed)
                 cout << setw(4) << "---";
 #endif
-            cout << resetiosflags(ios::left) << setw(7) << "-------"
-                 << endl;
+            cout << resetiosflags(ios::left) << setw(7) << "-------" << endl;
 
             map<string, DeviceDescriptor>::iterator it = m_DevicesCollection.begin();
 
@@ -975,7 +974,7 @@ public:
 #endif
                 cout << resetiosflags(ios::left) << setw(7)
                      << getFormattedMemory((double)it->second.totalMemory)
-                 << resetiosflags(ios::left) << endl;
+                     << resetiosflags(ios::left) << endl;
                 it++;
             }
 
