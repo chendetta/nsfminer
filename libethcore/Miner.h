@@ -302,8 +302,8 @@ struct Search_result
 
 struct Search_results
 {
-    uint32_t hashCount;
     uint32_t solCount;
+    uint32_t hashCount;
     volatile uint32_t done;
     Search_result results[MAX_RESULTS];
 };

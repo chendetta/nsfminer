@@ -266,8 +266,8 @@ struct Search_result
 
 struct Search_results
 {
-    uint hashCount;
     uint solCount;
+    uint hashCount;
     volatile uint done;
     struct Search_result results[MAX_RESULTS];
 };

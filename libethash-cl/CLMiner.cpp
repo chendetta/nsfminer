@@ -7,6 +7,21 @@
 #include "CLMiner.h"
 #include "ethash.h"
 
+#define CL_CALL(call)                                                                   \
+    do                                                                                  \
+    {                                                                                   \
+        cl_int err = call;                                                              \
+        if (CL_SUCCESS != err)                                                          \
+        {                                                                               \
+            std::stringstream ss;                                                       \
+            ss << "CL error in func " << __FUNCTION__ << " at line " << __LINE__ << ' ' \
+               << string(clErrorStr(err));                                              \
+            throw runtime_error(ss.str());                                              \
+        }                                                                               \
+    } while (0)
+
+static const char* clErrorStr(cl_int error);
+
 using namespace dev;
 using namespace eth;
 
@@ -20,162 +35,10 @@ namespace eth
 // to the assembly code for the binary kernels.
 const size_t c_maxSearchResults = 4;
 
-/**
- * Returns the name of a numerical cl_int error
- * Takes constants from CL/cl.h and returns them in a readable format
- */
-static const char* strClError(cl_int err)
-{
-    switch (err)
-    {
-    case CL_SUCCESS:
-        return "CL_SUCCESS";
-    case CL_DEVICE_NOT_FOUND:
-        return "CL_DEVICE_NOT_FOUND";
-    case CL_DEVICE_NOT_AVAILABLE:
-        return "CL_DEVICE_NOT_AVAILABLE";
-    case CL_COMPILER_NOT_AVAILABLE:
-        return "CL_COMPILER_NOT_AVAILABLE";
-    case CL_MEM_OBJECT_ALLOCATION_FAILURE:
-        return "CL_MEM_OBJECT_ALLOCATION_FAILURE";
-    case CL_OUT_OF_RESOURCES:
-        return "CL_OUT_OF_RESOURCES";
-    case CL_OUT_OF_HOST_MEMORY:
-        return "CL_OUT_OF_HOST_MEMORY";
-    case CL_PROFILING_INFO_NOT_AVAILABLE:
-        return "CL_PROFILING_INFO_NOT_AVAILABLE";
-    case CL_MEM_COPY_OVERLAP:
-        return "CL_MEM_COPY_OVERLAP";
-    case CL_IMAGE_FORMAT_MISMATCH:
-        return "CL_IMAGE_FORMAT_MISMATCH";
-    case CL_IMAGE_FORMAT_NOT_SUPPORTED:
-        return "CL_IMAGE_FORMAT_NOT_SUPPORTED";
-    case CL_BUILD_PROGRAM_FAILURE:
-        return "CL_BUILD_PROGRAM_FAILURE";
-    case CL_MAP_FAILURE:
-        return "CL_MAP_FAILURE";
-    case CL_MISALIGNED_SUB_BUFFER_OFFSET:
-        return "CL_MISALIGNED_SUB_BUFFER_OFFSET";
-    case CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST:
-        return "CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST";
-
-#ifdef CL_VERSION_1_2
-    case CL_COMPILE_PROGRAM_FAILURE:
-        return "CL_COMPILE_PROGRAM_FAILURE";
-    case CL_LINKER_NOT_AVAILABLE:
-        return "CL_LINKER_NOT_AVAILABLE";
-    case CL_LINK_PROGRAM_FAILURE:
-        return "CL_LINK_PROGRAM_FAILURE";
-    case CL_DEVICE_PARTITION_FAILED:
-        return "CL_DEVICE_PARTITION_FAILED";
-    case CL_KERNEL_ARG_INFO_NOT_AVAILABLE:
-        return "CL_KERNEL_ARG_INFO_NOT_AVAILABLE";
-#endif  // CL_VERSION_1_2
-
-    case CL_INVALID_VALUE:
-        return "CL_INVALID_VALUE";
-    case CL_INVALID_DEVICE_TYPE:
-        return "CL_INVALID_DEVICE_TYPE";
-    case CL_INVALID_PLATFORM:
-        return "CL_INVALID_PLATFORM";
-    case CL_INVALID_DEVICE:
-        return "CL_INVALID_DEVICE";
-    case CL_INVALID_CONTEXT:
-        return "CL_INVALID_CONTEXT";
-    case CL_INVALID_QUEUE_PROPERTIES:
-        return "CL_INVALID_QUEUE_PROPERTIES";
-    case CL_INVALID_COMMAND_QUEUE:
-        return "CL_INVALID_COMMAND_QUEUE";
-    case CL_INVALID_HOST_PTR:
-        return "CL_INVALID_HOST_PTR";
-    case CL_INVALID_MEM_OBJECT:
-        return "CL_INVALID_MEM_OBJECT";
-    case CL_INVALID_IMAGE_FORMAT_DESCRIPTOR:
-        return "CL_INVALID_IMAGE_FORMAT_DESCRIPTOR";
-    case CL_INVALID_IMAGE_SIZE:
-        return "CL_INVALID_IMAGE_SIZE";
-    case CL_INVALID_SAMPLER:
-        return "CL_INVALID_SAMPLER";
-    case CL_INVALID_BINARY:
-        return "CL_INVALID_BINARY";
-    case CL_INVALID_BUILD_OPTIONS:
-        return "CL_INVALID_BUILD_OPTIONS";
-    case CL_INVALID_PROGRAM:
-        return "CL_INVALID_PROGRAM";
-    case CL_INVALID_PROGRAM_EXECUTABLE:
-        return "CL_INVALID_PROGRAM_EXECUTABLE";
-    case CL_INVALID_KERNEL_NAME:
-        return "CL_INVALID_KERNEL_NAME";
-    case CL_INVALID_KERNEL_DEFINITION:
-        return "CL_INVALID_KERNEL_DEFINITION";
-    case CL_INVALID_KERNEL:
-        return "CL_INVALID_KERNEL";
-    case CL_INVALID_ARG_INDEX:
-        return "CL_INVALID_ARG_INDEX";
-    case CL_INVALID_ARG_VALUE:
-        return "CL_INVALID_ARG_VALUE";
-    case CL_INVALID_ARG_SIZE:
-        return "CL_INVALID_ARG_SIZE";
-    case CL_INVALID_KERNEL_ARGS:
-        return "CL_INVALID_KERNEL_ARGS";
-    case CL_INVALID_WORK_DIMENSION:
-        return "CL_INVALID_WORK_DIMENSION";
-    case CL_INVALID_WORK_GROUP_SIZE:
-        return "CL_INVALID_WORK_GROUP_SIZE";
-    case CL_INVALID_WORK_ITEM_SIZE:
-        return "CL_INVALID_WORK_ITEM_SIZE";
-    case CL_INVALID_GLOBAL_OFFSET:
-        return "CL_INVALID_GLOBAL_OFFSET";
-    case CL_INVALID_EVENT_WAIT_LIST:
-        return "CL_INVALID_EVENT_WAIT_LIST";
-    case CL_INVALID_EVENT:
-        return "CL_INVALID_EVENT";
-    case CL_INVALID_OPERATION:
-        return "CL_INVALID_OPERATION";
-    case CL_INVALID_GL_OBJECT:
-        return "CL_INVALID_GL_OBJECT";
-    case CL_INVALID_BUFFER_SIZE:
-        return "CL_INVALID_BUFFER_SIZE";
-    case CL_INVALID_MIP_LEVEL:
-        return "CL_INVALID_MIP_LEVEL";
-    case CL_INVALID_GLOBAL_WORK_SIZE:
-        return "CL_INVALID_GLOBAL_WORK_SIZE";
-    case CL_INVALID_PROPERTY:
-        return "CL_INVALID_PROPERTY";
-
-#ifdef CL_VERSION_1_2
-    case CL_INVALID_IMAGE_DESCRIPTOR:
-        return "CL_INVALID_IMAGE_DESCRIPTOR";
-    case CL_INVALID_COMPILER_OPTIONS:
-        return "CL_INVALID_COMPILER_OPTIONS";
-    case CL_INVALID_LINKER_OPTIONS:
-        return "CL_INVALID_LINKER_OPTIONS";
-    case CL_INVALID_DEVICE_PARTITION_COUNT:
-        return "CL_INVALID_DEVICE_PARTITION_COUNT";
-#endif  // CL_VERSION_1_2
-
-#ifdef CL_VERSION_2_0
-    case CL_INVALID_PIPE_SIZE:
-        return "CL_INVALID_PIPE_SIZE";
-    case CL_INVALID_DEVICE_QUEUE:
-        return "CL_INVALID_DEVICE_QUEUE";
-#endif  // CL_VERSION_2_0
-
-#ifdef CL_VERSION_2_2
-    case CL_INVALID_SPEC_ID:
-        return "CL_INVALID_SPEC_ID";
-    case CL_MAX_SIZE_RESTRICTION_EXCEEDED:
-        return "CL_MAX_SIZE_RESTRICTION_EXCEEDED";
-#endif  // CL_VERSION_2_2
-    }
-
-    return "Unknown CL error encountered";
-}
-
 static string ethCLErrorHelper(const char* msg, cl::Error const& clerr)
 {
     ostringstream osstream;
-    osstream << msg << ": " << clerr.what() << ": " << strClError(clerr.err()) << " ("
+    osstream << msg << ": " << clerr.what() << ": " << string(clErrorStr(clerr.err())) << " ("
              << clerr.err() << ")";
     return osstream.str();
 }
@@ -249,8 +112,8 @@ void CLMiner::miner_kick()
 {
     if (resourceInitialized())
     {
-        m_abortqueue->enqueueWriteBuffer(
-            *m_searchBuffer, CL_FALSE, offsetof(Search_results, done), sizeof(one), &one);
+        CL_CALL(m_abortqueue->enqueueWriteBuffer(
+            *m_searchBuffer, CL_FALSE, offsetof(Search_results, done), sizeof(one), &one));
     }
     m_new_work_signal.notify_one();
 }
@@ -647,8 +510,8 @@ bool CLMiner::miner_init_epoch()
 
             m_dagKernel = cl::Kernel(program, "GenerateDAG");
 
-            m_queue->enqueueWriteBuffer(
-                *m_light, CL_TRUE, 0, m_epochContext.lightSize, m_epochContext.lightCache);
+            CL_CALL(m_queue->enqueueWriteBuffer(
+                *m_light, CL_TRUE, 0, m_epochContext.lightSize, m_epochContext.lightCache));
         }
         catch (cl::Error const& err)
         {
@@ -675,8 +538,8 @@ bool CLMiner::miner_init_epoch()
         for (start = 0; start <= workItems - chunk; start += chunk)
         {
             m_dagKernel.setArg(0, start);
-            m_queue->enqueueNDRangeKernel(
-                m_dagKernel, cl::NullRange, chunk, m_deviceDescriptor.clGroupSize);
+            CL_CALL(m_queue->enqueueNDRangeKernel(
+                m_dagKernel, cl::NullRange, chunk, m_deviceDescriptor.clGroupSize));
             m_queue->finish();
         }
         if (start < workItems)
@@ -685,8 +548,8 @@ bool CLMiner::miner_init_epoch()
             groupsLeft =
                 (groupsLeft + m_deviceDescriptor.clGroupSize - 1) / m_deviceDescriptor.clGroupSize;
             m_dagKernel.setArg(0, start);
-            m_queue->enqueueNDRangeKernel(m_dagKernel, cl::NullRange,
-                groupsLeft * m_deviceDescriptor.clGroupSize, m_deviceDescriptor.clGroupSize);
+            CL_CALL(m_queue->enqueueNDRangeKernel(m_dagKernel, cl::NullRange,
+                groupsLeft * m_deviceDescriptor.clGroupSize, m_deviceDescriptor.clGroupSize));
             m_queue->finish();
         }
 
@@ -720,14 +583,13 @@ bool CLMiner::miner_init_epoch()
     return true;
 }
 
-static uint32_t zerox3[3] = {0, 0, 0};
+static uint32_t zeros[3] = {0, 0, 0};
 
 void CLMiner::miner_clear_counts(uint32_t streamIdx)
 {
     (void)streamIdx;
     // clean the solution count, hash count, and abort flag
-    m_queue->enqueueWriteBuffer(
-        *m_searchBuffer, CL_FALSE, offsetof(Search_results, hashCount), sizeof(zerox3), zerox3);
+    CL_CALL(m_queue->enqueueWriteBuffer(*m_searchBuffer, CL_FALSE, 0, sizeof(zeros), zeros));
 }
 
 void CLMiner::miner_reset_device()
@@ -741,30 +603,31 @@ void CLMiner::miner_search(uint32_t streamIdx, uint64_t start_nonce)
     // Run the kernel.
     m_searchKernel.setArg(5, start_nonce);
     m_hung_miner.store(false);
-    m_queue->enqueueNDRangeKernel(m_searchKernel, cl::NullRange,
-        m_deviceDescriptor.clGroupSize * m_block_multiple, m_deviceDescriptor.clGroupSize);
+    CL_CALL(m_queue->enqueueNDRangeKernel(m_searchKernel, cl::NullRange,
+        m_deviceDescriptor.clGroupSize * m_block_multiple, m_deviceDescriptor.clGroupSize));
 }
 
 void CLMiner::miner_sync(uint32_t streamIdx, Search_results& search_buf)
 {
     (void)streamIdx;
     // no need to read the abort flag.
-    m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE, offsetof(Search_results, hashCount),
-        3 * sizeof(uint32_t), (void*)&search_buf.hashCount);
+    CL_CALL(
+        m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE, 0, 3 * sizeof(uint32_t), &search_buf));
     if (search_buf.solCount)
     {
         if (search_buf.solCount > MAX_RESULTS)
             search_buf.solCount = MAX_RESULTS;
 
-        m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE, offsetof(Search_results, results),
-            search_buf.solCount * sizeof(Search_result), (void*)search_buf.results);
+        CL_CALL(
+            m_queue->enqueueReadBuffer(*m_searchBuffer, CL_TRUE, offsetof(Search_results, results),
+                search_buf.solCount * sizeof(Search_result), (void*)search_buf.results));
     }
 }
 
 void CLMiner::miner_set_header(const h256& header)
 {
     // Update header constant buffer.
-    m_queue->enqueueWriteBuffer(*m_header, CL_FALSE, 0, header.size, header.data());
+    CL_CALL(m_queue->enqueueWriteBuffer(*m_header, CL_FALSE, 0, header.size, header.data()));
 }
 
 void CLMiner::miner_set_target(uint64_t target)
@@ -782,3 +645,80 @@ void CLMiner::miner_get_block_sizes(Block_sizes& blks)
     blks.multiplier = m_block_multiple;
 }
 
+
+const char* clErrorStr(cl_int error)
+{
+    // clang-format off
+    static const char* strings[] = {// Error Codes
+        "CL_SUCCESS"                //   0
+        , "CL_DEVICE_NOT_FOUND"  //  -1
+        , "CL_DEVICE_NOT_AVAILABLE"  //  -2
+        , "CL_COMPILER_NOT_AVAILABLE"  //  -3
+        , "CL_MEM_OBJECT_ALLOCATION_FAILURE"  //  -4
+        , "CL_OUT_OF_RESOURCES"  //  -5
+        , "CL_OUT_OF_HOST_MEMORY"  //  -6
+        , "CL_PROFILING_INFO_NOT_AVAILABLE"  //  -7
+        , "CL_MEM_COPY_OVERLAP"  //  -8
+        , "CL_IMAGE_FORMAT_MISMATCH"  //  -9
+        , "CL_IMAGE_FORMAT_NOT_SUPPORTED"  //  -10
+        , "CL_BUILD_PROGRAM_FAILURE"  //  -11
+        , "CL_MAP_FAILURE"  //  -12
+        , ""  //  -13
+        , ""  //  -14
+        , ""  //  -15
+        , ""  //  -16
+        , ""  //  -17
+        , ""  //  -18
+        , ""  //  -19
+        , ""  //  -20
+        , ""  //  -21
+        , ""  //  -22
+        , ""  //  -23
+        , ""  //  -24
+        , ""  //  -25
+        , ""  //  -26
+        , ""  //  -27
+        , ""  //  -28
+        , ""  //  -29
+        , "CL_INVALID_VALUE"  //  -30
+        , "CL_INVALID_DEVICE_TYPE"  //  -31
+        , "CL_INVALID_PLATFORM"  //  -32
+        , "CL_INVALID_DEVICE"  //  -33
+        , "CL_INVALID_CONTEXT"  //  -34
+        , "CL_INVALID_QUEUE_PROPERTIES"  //  -35
+        , "CL_INVALID_COMMAND_QUEUE"  //  -36
+        , "CL_INVALID_HOST_PTR"  //  -37
+        , "CL_INVALID_MEM_OBJECT"  //  -38
+        , "CL_INVALID_IMAGE_FORMAT_DESCRIPTOR"  //  -39
+        , "CL_INVALID_IMAGE_SIZE"  //  -40
+        , "CL_INVALID_SAMPLER"  //  -41
+        , "CL_INVALID_BINARY"  //  -42
+        , "CL_INVALID_BUILD_OPTIONS"  //  -43
+        , "CL_INVALID_PROGRAM"  //  -44
+        , "CL_INVALID_PROGRAM_EXECUTABLE"  //  -45
+        , "CL_INVALID_KERNEL_NAME"  //  -46
+        , "CL_INVALID_KERNEL_DEFINITION"  //  -47
+        , "CL_INVALID_KERNEL"  //  -48
+        , "CL_INVALID_ARG_INDEX"  //  -49
+        , "CL_INVALID_ARG_VALUE"  //  -50
+        , "CL_INVALID_ARG_SIZE"  //  -51
+        , "CL_INVALID_KERNEL_ARGS"  //  -52
+        , "CL_INVALID_WORK_DIMENSION"  //  -53
+        , "CL_INVALID_WORK_GROUP_SIZE"  //  -54
+        , "CL_INVALID_WORK_ITEM_SIZE"  //  -55
+        , "CL_INVALID_GLOBAL_OFFSET"  //  -56
+        , "CL_INVALID_EVENT_WAIT_LIST"  //  -57
+        , "CL_INVALID_EVENT"  //  -58
+        , "CL_INVALID_OPERATION"  //  -59
+        , "CL_INVALID_GL_OBJECT"  //  -60
+        , "CL_INVALID_BUFFER_SIZE"  //  -61
+        , "CL_INVALID_MIP_LEVEL"  //  -62
+        , "CL_INVALID_GLOBAL_WORK_SIZE"  //  -63
+        , "CL_UNKNOWN_ERROR_CODE"};
+
+    if (error >= -63 && error <= 0)
+        return strings[-error];
+    else
+        return strings[64];
+    // clang-format on
+}
