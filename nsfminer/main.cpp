@@ -902,69 +902,50 @@ public:
         // If requested list detected devices and exit
         if (should_list)
         {
-            cout << setw(4) << " Id ";
-            cout << setiosflags(ios::left) << setw(10) << "Pci Id    ";
-            cout << setw(5) << "Type ";
-            cout << setw(30) << "Name                          ";
+            cout << setiosflags(ios::left) << setw(3) << "Id";
+            cout << setw(13) << "Pci Id";
+            cout << setw(5) << "Type";
+            cout << setw(30) << "Name";
 
 #if ETH_ETHASHCUDA
             if (m_minerType == MinerType::CUDA || m_minerType == MinerType::Mixed)
             {
-                cout << setw(5) << "CUDA ";
-                cout << setw(4) << "SM  ";
+                cout << setw(5) << "CUDA";
+                cout << setw(4) << "SM";
             }
 #endif
 #if ETH_ETHASHCL
             if (m_minerType == MinerType::CL || m_minerType == MinerType::Mixed)
-                cout << setw(5) << "CL   ";
+                cout << setw(4) << "CL";
 #endif
-            cout << resetiosflags(ios::left) << setw(13) << "Total Memory"
-                 << " ";
-#if ETH_ETHASHCL
-            if (m_minerType == MinerType::CL || m_minerType == MinerType::Mixed)
-            {
-                cout << resetiosflags(ios::left) << setw(13) << "Cl Max Alloc"
-                     << " ";
-                cout << resetiosflags(ios::left) << setw(13) << "Cl Max W.Grp"
-                     << " ";
-            }
-#endif
+            cout << setw(7) << "Memory" << resetiosflags(ios::left) << endl;
 
-            cout << resetiosflags(ios::left) << endl;
-            cout << setw(4) << "--- ";
-            cout << setiosflags(ios::left) << setw(10) << "--------- ";
-            cout << setw(5) << "---- ";
-            cout << setw(30) << "----------------------------- ";
+            cout << setiosflags(ios::left) << setw(3) << "--";
+            cout << setw(13) << "------------";
+            cout << setw(5) << "----";
+            cout << setw(30) << "-----------------------------";
 
 #if ETH_ETHASHCUDA
             if (m_minerType == MinerType::CUDA || m_minerType == MinerType::Mixed)
             {
-                cout << setw(5) << "---- ";
-                cout << setw(4) << "--- ";
+                cout << setw(5) << "----";
+                cout << setw(4) << "---";
             }
 #endif
 #if ETH_ETHASHCL
             if (m_minerType == MinerType::CL || m_minerType == MinerType::Mixed)
-                cout << setw(5) << "---- ";
+                cout << setw(4) << "---";
 #endif
-            cout << resetiosflags(ios::left) << setw(13) << "------------"
-                 << " ";
-#if ETH_ETHASHCL
-            if (m_minerType == MinerType::CL || m_minerType == MinerType::Mixed)
-            {
-                cout << resetiosflags(ios::left) << setw(13) << "------------"
-                     << " ";
-                cout << resetiosflags(ios::left) << setw(13) << "------------"
-                     << " ";
-            }
-#endif
-            cout << resetiosflags(ios::left) << endl;
+            cout << resetiosflags(ios::left) << setw(7) << "-------"
+                 << endl;
+
             map<string, DeviceDescriptor>::iterator it = m_DevicesCollection.begin();
+
             while (it != m_DevicesCollection.end())
             {
                 auto i = distance(m_DevicesCollection.begin(), it);
-                cout << setw(3) << i << " ";
-                cout << setiosflags(ios::left) << setw(10) << it->first;
+                cout << setiosflags(ios::left) << setw(3) << i;
+                cout << setw(13) << it->first;
                 cout << setw(5);
                 switch (it->second.type)
                 {
@@ -980,7 +961,7 @@ public:
                 default:
                     break;
                 }
-                cout << setw(30) << (it->second.name).substr(0, 28);
+                cout << setw(30) << (it->second.name).substr(0, 29);
 #if ETH_ETHASHCUDA
                 if (m_minerType == MinerType::CUDA || m_minerType == MinerType::Mixed)
                 {
@@ -990,11 +971,11 @@ public:
 #endif
 #if ETH_ETHASHCL
                 if (m_minerType == MinerType::CL || m_minerType == MinerType::Mixed)
-                    cout << setw(5) << (it->second.clDetected ? "Yes" : "");
+                    cout << setw(4) << (it->second.clDetected ? "Yes" : "");
 #endif
-                cout << resetiosflags(ios::left) << setw(13)
-                     << getFormattedMemory((double)it->second.totalMemory) << " ";
-                cout << resetiosflags(ios::left) << endl;
+                cout << resetiosflags(ios::left) << setw(7)
+                     << getFormattedMemory((double)it->second.totalMemory)
+                 << resetiosflags(ios::left) << endl;
                 it++;
             }
 
